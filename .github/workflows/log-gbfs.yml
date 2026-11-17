@@ -1,0 +1,30 @@
+# Snapshot Cambridge station_status every 5 min and commit it to data/.
+# GitHub often starts scheduled runs late or skips some under load; the timestamps in the CSVs are the truth.
+name: log-gbfs
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: log-gbfs
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 gbfs_logger.py --regions 8
+      - name: Commit snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          git diff --cached --quiet && exit 0
+          git commit -m "snapshot $(date -u +%Y-%m-%dT%H:%MZ)"
+          git pull --rebase && git push
