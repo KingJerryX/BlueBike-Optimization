@@ -5,10 +5,14 @@
     python gbfs_logger.py --regions 8     # Cambridge only (what the GitHub Action runs)
     python gbfs_logger.py --summarize     # -> data/hourly_stockouts.csv (per station, date, hour)
     python gbfs_logger.py --selftest
+On Windows, run `pip install tzdata` first (zoneinfo has no built-in time zone database there).
 
 Output (all stations unless --regions is given):
     data/station_status/YYYY-MM-DD.csv       one row per station per snapshot
-    data/station_information/YYYY-MM-DD.csv  capacity/coords, refreshed once a day
+    data/station_information/YYYY-MM-DD.csv  capacity/coords, refreshed once a day (all stations)
+    data/system_alerts.jsonl                 only written when Bluebikes posts an alert
+Usable docks vary: num_bikes_available + num_bikes_disabled + num_docks_available + num_docks_disabled
+differs from `capacity` at ~88 stations, so use that per-snapshot sum, not `capacity`, as the ceiling.
 `short_name` (e.g. M32076) is the key that matches start_station_id/end_station_id in the trip CSVs.
 """
 import argparse
@@ -32,7 +36,8 @@ STATUS_COLUMNS = [
     "num_docks_available", "num_docks_disabled",
     "is_installed", "is_renting", "is_returning", "last_reported",
 ]
-INFO_COLUMNS = ["station_id", "short_name", "name", "region_id", "lat", "lon", "capacity"]
+# legacy_id = the numeric station id used in pre-2023 trip files
+INFO_COLUMNS = ["station_id", "short_name", "legacy_id", "name", "region_id", "lat", "lon", "capacity"]
 
 
 def fetch_feed(feed_name, retries=3):
@@ -93,6 +98,11 @@ def take_snapshot(region_ids=None):
             "capacity": info.get("capacity", ""),
         })
     append_rows(status_path, STATUS_COLUMNS, rows)
+
+    alerts = fetch_feed("system_alerts")["data"]["alerts"]  # closures/events; usually empty, gone once over
+    if alerts:
+        with open(DATA_DIR / "system_alerts.jsonl", "a") as alerts_file:
+            alerts_file.write(json.dumps({"snapshot_unix": snapshot_unix, "alerts": alerts}) + "\n")
     print(f"{snapshot_local:%Y-%m-%d %H:%M:%S} logged {len(rows)} stations")
 
 
