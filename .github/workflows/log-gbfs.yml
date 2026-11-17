@@ -1,30 +1,42 @@
-# Snapshot Cambridge station_status every 5 min and commit it to data/.
-# GitHub often starts scheduled runs late or skips some under load; the timestamps in the CSVs are the truth.
+# Snapshot Cambridge station_status every 5 min and commit each snapshot to data/.
+# GitHub's own */5 cron never fired reliably, so each run loops for ~5.5 h (jobs max out at 6 h)
+# and then starts the next run itself. The hourly cron only restarts the chain if it ever breaks.
 name: log-gbfs
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write  # lets the run dispatch the next one
 
 concurrency:
-  group: log-gbfs
+  group: log-gbfs  # one run at a time; an extra trigger waits as "pending" and replaces older pending ones
 
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v5
-      - run: python3 gbfs_logger.py --regions 8
-      - name: Commit snapshot
+      - name: Snapshot every 5 min for ~5.5 h
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data
-          git diff --cached --quiet && exit 0
-          git commit -m "snapshot $(date -u +%Y-%m-%dT%H:%MZ)"
-          git pull --rebase && git push
+          end=$((SECONDS + 330 * 60))
+          while [ $SECONDS -lt $end ]; do
+            python3 gbfs_logger.py --regions 8 || echo "snapshot failed, retrying next loop"
+            git add data
+            if ! git diff --cached --quiet; then
+              git commit -qm "snapshot $(date -u +%Y-%m-%dT%H:%MZ)"
+              git pull -q --rebase && git push -q || echo "push failed, will retry next loop"
+            fi
+            sleep $((300 - $(date +%s) % 300))  # wake on the next 5-minute mark
+          done
+      - name: Start the next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run log-gbfs.yml --ref main --repo ${{ github.repository }}
