@@ -1,2 +1,4 @@
 __pycache__/
 data/hourly_stockouts.csv
+data/trips/
+data/demand_rates.csv
